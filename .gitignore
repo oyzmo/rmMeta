@@ -7,7 +7,10 @@
 
 # Scratch: fixtures, screenshots, verification output, harness runs.
 # Nothing in here is part of the app.
-/dev
+/dev/*
+# ...except the GitHub mirror script, which the NAS should back up. It
+# filters dev/ out itself, so it never reaches GitHub.
+!/dev/push-github.sh
 
 # Editor and OS cruft
 *.swp
