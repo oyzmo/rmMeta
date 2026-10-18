@@ -1,0 +1,63 @@
+# Flatpak manifest for rmMeta.
+#
+# Build with ./makeflatpak.sh — it regenerates generated-sources.json from
+# Cargo.lock, builds, and exports a .flatpak bundle without installing it.
+#
+# Runtime/SDK versions: keep RUNTIME_VERSION in makeflatpak.sh in sync with the
+# rust-stable extension's base. GNOME 48 is built on freedesktop 24.08, GNOME 50
+# on 25.08. Check what is available with:
+#   flatpak remote-ls flathub --runtime | grep -E 'Platform|rust-stable'
+
+app-id: no.oyzmo.RmMeta
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: rmmeta
+
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+
+  # No --filesystem=host. Files reach the app through the portal, either by
+  # drag and drop or through the file chooser, and the portal hands back write
+  # access to exactly the files the user picked. A metadata remover asking for
+  # the whole home directory would be a poor advertisement for itself.
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/rmmeta/cargo
+
+modules:
+  - name: rmmeta
+    buildsystem: simple
+    build-commands:
+      # Crates come from generated-sources.json, so the build stays offline.
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --verbose
+      - install -Dm755 target/release/rmmeta /app/bin/rmmeta
+      - install -Dm644 flatpak/no.oyzmo.RmMeta.desktop
+          /app/share/applications/no.oyzmo.RmMeta.desktop
+      - install -Dm644 flatpak/no.oyzmo.RmMeta.metainfo.xml
+          /app/share/metainfo/no.oyzmo.RmMeta.metainfo.xml
+      - install -Dm644 flatpak/no.oyzmo.RmMeta.svg
+          /app/share/icons/hicolor/scalable/apps/no.oyzmo.RmMeta.svg
+      # The GPL wants its text to travel with the binary. The metainfo only
+      # names the licence; this is the copy itself.
+      - install -Dm644 COPYING /app/share/licenses/no.oyzmo.RmMeta/COPYING
+    sources:
+      # Paths here are relative to THIS FILE, not to the project root, so both
+      # entries have to climb out of flatpak/. `path: .` would hand the builder
+      # the flatpak directory and the build would fail on a missing Cargo.toml.
+      - type: dir
+        path: ..
+        skip:
+          - dev
+          - target
+          - build
+          - dist
+      - ../generated-sources.json

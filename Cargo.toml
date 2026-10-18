@@ -1,0 +1,28 @@
+[package]
+name = "rmmeta"
+version = "0.4.0"
+edition = "2021"
+description = "Strip identifying metadata from images, PDFs and office documents old and new"
+license = "GPL-3.0-or-later"
+# A build script makes cargo walk the whole package directory to fingerprint
+# it. `build/` is flatpak-builder's scratch tree: root-owned in places and
+# holding a symlink loop through a sandbox's /proc, which stops that walk dead.
+# These four are all generated, so none of them belongs in the fingerprint.
+exclude = ["build", "dist", "dev", "target"]
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11.4", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.9.2", features = ["v1_6"] }
+quick-xml = "0.41.0"
+# default-features brings chrono, jiff, time and rayon. We delete dates rather
+# than interpret them, so none of that is wanted in the Flatpak build.
+lopdf = { version = "0.44", default-features = false }
+# Legacy Office files are OLE2 compound files; this reads and rewrites them.
+cfb = "0.14"
+# Pure-Rust deflate on purpose: the Flatpak build has no C toolchain and the
+# vendored-sources generator only understands crates.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[profile.release]
+opt-level = 2
+strip = true

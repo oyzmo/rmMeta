@@ -1,0 +1,43 @@
+# Build output
+/target
+/build
+/dist
+/generated-sources.json
+*.flatpak
+
+# Scratch: fixtures, screenshots, verification output, harness runs.
+# Nothing in here is part of the app.
+/dev
+
+# Editor and OS cruft
+*.swp
+*~
+.DS_Store
+
+# --- NAS backup: build output, caches and temp files ---
+/target/
+/build/
+/build-dir/
+/build-repo/
+/dist/
+/repo/
+/.flatpak-builder/
+/.flatpak/
+/build-aux/build/
+/build-aux/repo/
+/build-aux/.flatpak-builder/
+*.flatpak
+*-src.zip
+.wrangler/
+node_modules/
+__pycache__/
+*.pyc
+venv/
+.venv/
+tmp/
+.cache/
+*.log
+*.swp
+*~
+.DS_Store
+.claude/settings.local.json

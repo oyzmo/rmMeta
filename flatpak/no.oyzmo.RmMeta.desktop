@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=rmMeta
+Comment=Remove hidden metadata from photos and documents
+Exec=rmmeta
+Icon=no.oyzmo.RmMeta
+Terminal=false
+Categories=Utility;Security;GTK;
+Keywords=metadata;exif;gps;privacy;strip;anonymise;anonymize;photo;document;
+# No MimeType= on purpose, and no %f. Claiming image/jpeg would put rmMeta in
+# the "Open With" list for every photo on the system, and the desktop promotes
+# a sole recommender to *default* — double-clicking a holiday snap would open
+# a metadata stripper instead of the image viewer. Files come in by drag and
+# drop or through the file chooser.
+StartupNotify=true

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The empty state's icon: the app's own mark, redrawn as a GNOME symbolic.
+
+  Symbolic icons are recoloured by GTK, which forces `fill` on every rect,
+  circle and path, so the colours declared here only matter if the file is
+  ever opened outside the app. Opacity is NOT overridden, which is what lets
+  the fragments fade — the dissolve survives the monochrome treatment while a
+  colour difference would not.
+
+  Drawn on the 16-grid Adwaita uses. Strokes are shapes, never `stroke`:
+  GTK recolours fills only, so a stroked outline would keep this file's
+  literal colour and ignore the theme.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="#2e3436">
+  <!-- The file: an outlined frame, cut with fill-rule="evenodd". -->
+  <path fill-rule="evenodd" d="M2 3 H8.4 A1 1 0 0 1 9.4 4 V11 A1 1 0 0 1 8.4 12 H2 A1 1 0 0 1 1 11 V4 A1 1 0 0 1 2 3 Z M2.6 4.1 H7.8 A0.5 0.5 0 0 1 8.3 4.6 V10.4 A0.5 0.5 0 0 1 7.8 10.9 H2.6 A0.5 0.5 0 0 1 2.1 10.4 V4.6 A0.5 0.5 0 0 1 2.6 4.1 Z"/>
+
+  <!-- Its picture: sun and horizon, sitting on the frame's inner edge. -->
+  <circle cx="3.9" cy="5.9" r="0.85"/>
+  <!-- The baseline runs 0.1 past the inner edge so it merges into the frame
+       instead of leaving an antialiasing seam along it. -->
+  <path d="M2.1 11 L4.4 7.5 L6 9.6 L6.8 8.6 L8.3 11 Z"/>
+
+  <!-- The metadata coming off it: squares that shrink and fade as they drift,
+       until there is nothing left. -->
+  <rect x="10" y="3.4" width="1.9" height="1.9" rx="0.45" opacity="0.9"/>
+  <rect x="10" y="6.6" width="1.9" height="1.9" rx="0.45" opacity="0.75"/>
+  <rect x="10.1" y="9.8" width="1.7" height="1.7" rx="0.4" opacity="0.6"/>
+  <rect x="12.5" y="4.9" width="1.5" height="1.5" rx="0.35" opacity="0.55"/>
+  <rect x="12.5" y="8.1" width="1.5" height="1.5" rx="0.35" opacity="0.45"/>
+  <rect x="12.6" y="11.2" width="1.3" height="1.3" rx="0.3" opacity="0.3"/>
+  <rect x="14.5" y="3.2" width="1.1" height="1.1" rx="0.25" opacity="0.28"/>
+  <rect x="14.6" y="6.5" width="1.1" height="1.1" rx="0.25" opacity="0.3"/>
+  <rect x="14.6" y="9.7" width="1" height="1" rx="0.25" opacity="0.22"/>
+</svg>

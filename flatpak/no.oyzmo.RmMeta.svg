@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>rmMeta</title>
+  <!-- Sage tile with cream marks, per the palette. -->
+  <rect width="128" height="128" rx="28" fill="#7FA07A"/>
+
+  <!-- A photo, standing in for any file that carries hidden data. Its right
+       edge stops short of the fragments so the sage shows through the gap,
+       which is what makes the edge read as broken rather than merely busy. -->
+  <g transform="translate(22 32)">
+    <rect width="52" height="50" rx="6" fill="#F4E7D3"/>
+    <circle cx="16" cy="14" r="5.5" fill="#8A6A50"/>
+    <path d="M5 42 L20 24 L31 36 L38 29 L47 42 Z" fill="#4A3428"/>
+  </g>
+
+  <!-- The metadata coming off it: the picture breaking into squares that get
+       smaller and fainter as they drift away, until there is nothing left. -->
+  <g fill="#F4E7D3">
+    <rect x="77" y="37" width="12" height="12" rx="3" opacity="0.92"/>
+    <rect x="77" y="54" width="13" height="13" rx="3" opacity="0.96"/>
+    <rect x="78" y="71" width="11" height="11" rx="3" opacity="0.86"/>
+    <rect x="86" y="90" width="8" height="8" rx="2" opacity="0.40"/>
+    <rect x="93" y="43" width="10" height="10" rx="3" opacity="0.64"/>
+    <rect x="94" y="61" width="10" height="10" rx="3" opacity="0.70"/>
+    <rect x="92" y="78" width="9" height="9" rx="2" opacity="0.56"/>
+    <rect x="104" y="49" width="8" height="8" rx="2" opacity="0.44"/>
+    <rect x="105" y="67" width="8" height="8" rx="2" opacity="0.46"/>
+    <rect x="104" y="84" width="7" height="7" rx="2" opacity="0.32"/>
+    <rect x="100" y="33" width="7" height="7" rx="2" opacity="0.34"/>
+    <rect x="109" y="57" width="6" height="6" rx="2" opacity="0.28"/>
+    <rect x="110" y="75" width="6" height="6" rx="2" opacity="0.24"/>
+    <rect x="107" y="90" width="5" height="5" rx="1.5" opacity="0.18"/>
+    <rect x="99" y="96" width="6" height="6" rx="2" opacity="0.22"/>
+    <rect x="111" y="41" width="5" height="5" rx="1.5" opacity="0.16"/>
+  </g>
+</svg>

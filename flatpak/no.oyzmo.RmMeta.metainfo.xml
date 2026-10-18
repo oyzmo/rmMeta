@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>no.oyzmo.RmMeta</id>
+  <name>rmMeta</name>
+  <summary>Remove hidden metadata from photos and documents</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <description>
+    <p>
+      Files record more about you than you put in them. Cameras and phones write
+      down where a picture was taken, which camera took it and when. Office
+      applications add the author's name, the company, how many times the
+      document was saved and how long it was open. All of it travels with the
+      file when you send it.
+    </p>
+    <p>
+      rmMeta shows you what is in a file before it touches anything, then takes
+      it out. Images are never re-encoded, so a cleaned photo is pixel for pixel
+      the one you started with.
+    </p>
+    <p>Handles:</p>
+    <ul>
+      <li>JPEG — Exif, GPS coordinates, camera serial numbers, maker notes, XMP, IPTC, comments and the embedded thumbnail</li>
+      <li>PNG, GIF and WebP — text chunks, comments, embedded Exif and XMP</li>
+      <li>TIFF and camera RAW — location, serial numbers, maker notes and timestamps, without disturbing the image data</li>
+      <li>HEIC, HEIF and AVIF — the Exif and XMP payloads</li>
+      <li>SVG — the RDF metadata block and the drawing program's own traces</li>
+      <li>Word, Excel and PowerPoint 97-2003 files — the summary property streams</li>
+      <li>PDF — the information dictionary, XMP, the file identifier, comment authors, and any earlier revisions the file was still carrying</li>
+      <li>Word, Excel and PowerPoint files — author, company, revision count and editing times</li>
+      <li>OpenDocument text, spreadsheets and presentations — the same, plus the software that wrote them</li>
+    </ul>
+    <p>Everything happens on your own computer. Nothing is uploaded anywhere.</p>
+  </description>
+
+  <launchable type="desktop-id">no.oyzmo.RmMeta.desktop</launchable>
+  <url type="homepage">https://oyzmo.no/apps/</url>
+  <developer id="no.oyzmo">
+    <name>oyzmo</name>
+  </developer>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.4.0" date="2026-09-24">
+      <description>
+        <p>Maker notes in RAW files are kept by default, with a menu option to remove them; Clean Automatically mode cleans dropped files straight away; cleaned rows keep their list of what was removed</p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-09-24">
+      <description>
+        <p>Fixes: PDF form field names kept; SVG stays well-formed; embedded pictures cleaned in documents, PDFs and SVGs; safer TIFF/RAW sub-directories; ORF and RW2; legacy Office keeps titles and blanks Excel/PowerPoint user names; Flatpak copies go to a chosen folder</p>
+      </description>
+    </release>
+    <release version="0.2.1" date="2026-09-02">
+      <description>
+        <p>Stronger dissolve in the app icon.</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-09-02">
+      <description>
+        <p>Added GIF, WebP, TIFF and camera RAW, HEIC/HEIF/AVIF, SVG, and legacy Office (.doc/.xls/.ppt) support.</p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-09-02">
+      <description>
+        <p>Added PDF support.</p>
+      </description>
+    </release>
+    <release version="0.0.2" date="2026-09-02">
+      <description>
+        <p>Smaller default window size.</p>
+      </description>
+    </release>
+    <release version="0.0.1" date="2026-09-02">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

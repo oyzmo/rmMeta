@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The icon travels inside the binary rather than being installed into a theme
+  directory, so a `cargo run` from the source tree and the Flatpak find it the
+  same way and neither needs an install step. GtkIconTheme treats a resource
+  path as part of hicolor, so the layout below (scalable/actions/NAME.svg) is
+  what makes `icon_name` lookup work.
+-->
+<gresources>
+  <gresource prefix="/no/oyzmo/RmMeta/icons/scalable/actions">
+    <!-- No preprocess="xml-stripblanks": that shells out to xmllint, which is
+         not in the GNOME SDK, and the saving would be a few hundred bytes. -->
+    <file>no.oyzmo.RmMeta-drop-symbolic.svg</file>
+  </gresource>
+</gresources>
