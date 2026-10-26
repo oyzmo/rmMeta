@@ -200,7 +200,7 @@ while true; do
     echo "  9)   Release newest version on GitHub (from dist/)"
     echo " 14) Back up the flatpak signing key to the NAS (after the key changes)"
     echo "  q) Quit"
-    read -rp "Choose: " choice
+    read -rp "Choose: " choice || { echo; exit 0; }  # Ctrl+D quits
     case "$choice" in
         1) install_tools ;;
         2) compile_app ;;
