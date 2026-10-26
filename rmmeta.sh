@@ -9,7 +9,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The checkout sits on a share that is unreliable for parallel compiler
 # writes, so build on local disk.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/rmmeta/build}"
-FLATPAK_SITE="${FLATPAK_SITE:-/mnt/mycode/flatpak}"
+# The oyzmo Flatpak site lives in the root of the shared code folder: that is
+# /mnt/mycode on the VM and ~/Code on the desktop (the same share), told apart
+# by where this script is. FLATPAK_SITE overrides.
+case "$SCRIPT_DIR/" in
+    /mnt/mycode/*)   FLATPAK_SITE="${FLATPAK_SITE:-/mnt/mycode/flatpak}" ;;
+    "$HOME"/Code/*)  FLATPAK_SITE="${FLATPAK_SITE:-$HOME/Code/flatpak}" ;;
+    *)               FLATPAK_SITE="${FLATPAK_SITE:-}" ;;
+esac
 
 BIN_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
@@ -146,7 +153,7 @@ bump_version() {
 }
 
 publish_flatpak() {
-    [ -x "$FLATPAK_SITE/tools/push.sh" ] || { err "No Flatpak site at $FLATPAK_SITE."; return 1; }
+    [ -x "$FLATPAK_SITE/tools/push.sh" ] || { err "No oyzmo Flatpak site here (looked for /mnt/mycode/flatpak or ~/Code/flatpak)."; return 1; }
     "$FLATPAK_SITE/tools/push.sh"
 }
 
@@ -171,6 +178,7 @@ full_release() {
 }
 
 backup_key() {
+    [ -x "$FLATPAK_SITE/tools/backup-key.sh" ] || { err "No oyzmo Flatpak site here."; return 1; }
     "$FLATPAK_SITE/tools/backup-key.sh"
 }
 

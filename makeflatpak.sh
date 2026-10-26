@@ -99,6 +99,25 @@ if [ -n "$JSON_REF" ] && [ ! -f "${MANIFEST_DIR}/${JSON_REF}" ]; then
 and does not exist. This script writes generated-sources.json to $(pwd)."
 fi
 
+# ---------------------------------------------------------- flatpak.oyzmo.no
+# The oyzmo Flatpak site lives in the root of the shared code folder: that is
+# /mnt/mycode on the VM and ~/Code on the desktop (the same share), told apart
+# by where this script is. FLATPAK_SITE overrides. Anywhere else — someone
+# else's checkout — there is no site and the bundle is a plain one.
+case "$PWD/" in
+    /mnt/mycode/*)   FLATPAK_SITE="${FLATPAK_SITE:-/mnt/mycode/flatpak}" ;;
+    "$HOME"/Code/*)  FLATPAK_SITE="${FLATPAK_SITE:-$HOME/Code/flatpak}" ;;
+    *)               FLATPAK_SITE="${FLATPAK_SITE:-}" ;;
+esac
+
+# With the site present, publishing is not optional: check the key and tools
+# before the long build rather than quietly making a bundle without updates.
+publish=0
+if [ -n "$FLATPAK_SITE" ] && [ -d "$FLATPAK_SITE" ]; then
+    "$FLATPAK_SITE/tools/publish.sh" --check || exit 1
+    publish=1
+fi
+
 # ------------------------------------------------------------------------ build
 say "Building (this takes a while the first time)"
 mkdir -p "$(dirname "$OUT")"
@@ -114,17 +133,15 @@ flatpak-builder \
     "$MANIFEST"
 
 # ----------------------------------------------------------------------- bundle
-# With the oyzmo Flatpak site checked out and its signing key present, the
-# build is also published there (signed into its repo, not yet pushed live)
-# and the bundle carries flatpak.oyzmo.no as its update address, so GNOME
-# Software offers new versions as updates. Without either, a plain bundle.
-FLATPAK_SITE="${FLATPAK_SITE:-/mnt/mycode/flatpak}"
-FLATPAK_GNUPG="${FLATPAK_GNUPG:-$HOME/.local/share/oyzmo-flatpak/gnupg}"
-if [ -x "$FLATPAK_SITE/tools/publish.sh" ] && [ -d "$FLATPAK_GNUPG" ]; then
+# With the oyzmo Flatpak site present (checked before the build), the build is
+# also published there (signed into its repo, not yet pushed live) and the
+# bundle carries flatpak.oyzmo.no as its update address, so GNOME Software
+# offers new versions as updates. Without the site, a plain bundle.
+if [ "$publish" = 1 ]; then
     say "Publishing into $FLATPAK_SITE"
     "$FLATPAK_SITE/tools/publish.sh" "$REPO_DIR" "$APP_ID" rmMeta "$VERSION" "$OUT"
 else
-    say "Exporting bundle (no Flatpak site or signing key, so not published)"
+    say "Exporting bundle (no oyzmo Flatpak site here, so not published)"
     flatpak build-bundle "$REPO_DIR" "$OUT" "$APP_ID" \
         --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
 fi
