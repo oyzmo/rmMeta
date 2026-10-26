@@ -12,6 +12,7 @@
 # filters dev/ out itself, so it never reaches GitHub.
 !/dev/push-github.sh
 !/dev/release-github.sh
+!/dev/screenshots.sh
 
 # Editor and OS cruft
 *.swp

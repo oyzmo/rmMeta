@@ -40,6 +40,21 @@
     <name>oyzmo</name>
   </developer>
 
+  <screenshots>
+    <screenshot type="default">
+      <caption>What a photo carries: camera, owner, serial number and GPS location</caption>
+      <image type="source" width="620" height="555">https://flatpak.oyzmo.no/screenshots/rmmeta/details.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Photos and documents waiting to be cleaned</caption>
+      <image type="source" width="620" height="555">https://flatpak.oyzmo.no/screenshots/rmmeta/files.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Drop files to see what is inside them</caption>
+      <image type="source" width="620" height="555">https://flatpak.oyzmo.no/screenshots/rmmeta/start.png</image>
+    </screenshot>
+  </screenshots>
+
   <supports>
     <control>pointing</control>
     <control>keyboard</control>
@@ -49,6 +64,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.6" date="2026-10-26">
+      <description>
+        <p>Screenshots in GNOME Software</p>
+      </description>
+    </release>
     <release version="0.4.5" date="2026-10-26">
       <description>
         <p>Menus quit on Ctrl+D instead of looping, and the GitHub check no longer swallows typed-ahead input</p>
