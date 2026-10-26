@@ -38,13 +38,13 @@ FILES=(
     Cargo.lock
     build.rs
     readme.md
-    CLAUDE.md
     # The GPL requires the licence text to travel with the code it covers, so
     # this is a distribution file, not documentation.
     COPYING
     .gitignore
     bump.sh
     makeflatpak.sh
+    rmmeta.sh
     source.sh
     screenshot.png
     # dev/ is scratch and gitignored, but these three are the documented way to

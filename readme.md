@@ -44,6 +44,14 @@ With **Clean Automatically** switched on in the menu, dropped files are cleaned 
 
 By default a cleaned copy is written beside the original (`holiday.jpg` → `holiday-clean.jpg`), so the original is never touched. The Flatpak only has access to the files you picked, not the folders around them, so it asks for a folder to put the copies in. Turn on **Replace originals** to overwrite in place; writes go through a temporary file and a rename, so an interrupted write cannot leave a half-written file behind. A file edited after you added it is examined again instead of being overwritten with the older version.
 
+## Installing
+
+```sh
+flatpak install https://flatpak.oyzmo.no/rmmeta.flatpakref
+```
+
+or open that link in GNOME Software. New versions then show up in Software's Updates (or with `flatpak update`).
+
 ## Building
 
 ```sh
@@ -57,6 +65,8 @@ Needs `gtk4-devel` and `libadwaita-devel`.
 `./makeflatpak.sh` builds a Flatpak bundle into `dist/` and installs nothing. It needs `flatpak-builder`, `org.gnome.Sdk//50` and `org.freedesktop.Sdk.Extension.rust-stable//25.08`, and tells you the exact command if any are missing.
 
 `./bump.sh patch|minor|major [-m "note"]` is the only way the version changes.
+
+`./rmmeta.sh` is a menu for all of it: install the build tools, compile, install on this desktop (or uninstall), and a Release section that bumps, builds the distribution, publishes to flatpak.oyzmo.no and makes the GitHub release.
 
 ## Licence
 

@@ -11,6 +11,7 @@
 # ...except the GitHub mirror script, which the NAS should back up. It
 # filters dev/ out itself, so it never reaches GitHub.
 !/dev/push-github.sh
+!/dev/release-github.sh
 
 # Editor and OS cruft
 *.swp

@@ -2,9 +2,11 @@
 #
 # Build a Flatpak bundle of rmMeta.
 #
-# This BUILDS ONLY. Nothing is installed to your system and no repository
-# outside ./build/ is touched. The result is dist/RmMeta-<version>.flatpak
-# (version from Cargo.toml), which you can install later with:
+# This BUILDS ONLY. Nothing is installed to your system, and the only
+# repository outside ./build/ it touches is the oyzmo Flatpak site, when present
+# (see the bundle step; publishing there stays local until rmmeta.sh pushes
+# it). The result is dist/RmMeta-<version>.flatpak (version from Cargo.toml),
+# which you can install later with:
 #
 #     flatpak install --user dist/RmMeta-<version>.flatpak
 #
@@ -112,9 +114,20 @@ flatpak-builder \
     "$MANIFEST"
 
 # ----------------------------------------------------------------------- bundle
-say "Exporting bundle"
-flatpak build-bundle "$REPO_DIR" "$OUT" "$APP_ID" \
-    --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+# With the oyzmo Flatpak site checked out and its signing key present, the
+# build is also published there (signed into its repo, not yet pushed live)
+# and the bundle carries flatpak.oyzmo.no as its update address, so GNOME
+# Software offers new versions as updates. Without either, a plain bundle.
+FLATPAK_SITE="${FLATPAK_SITE:-/mnt/mycode/flatpak}"
+FLATPAK_GNUPG="${FLATPAK_GNUPG:-$HOME/.local/share/oyzmo-flatpak/gnupg}"
+if [ -x "$FLATPAK_SITE/tools/publish.sh" ] && [ -d "$FLATPAK_GNUPG" ]; then
+    say "Publishing into $FLATPAK_SITE"
+    "$FLATPAK_SITE/tools/publish.sh" "$REPO_DIR" "$APP_ID" rmMeta "$VERSION" "$OUT"
+else
+    say "Exporting bundle (no Flatpak site or signing key, so not published)"
+    flatpak build-bundle "$REPO_DIR" "$OUT" "$APP_ID" \
+        --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+fi
 
 say "Done — $(du -h "$OUT" | cut -f1) at $OUT"
 echo
