@@ -778,6 +778,8 @@ fn show_about(ui: &Rc<Ui>) {
         .application_name("rmMeta")
         .application_icon(APP_ID)
         .version(env!("CARGO_PKG_VERSION"))
+        .release_notes_version(env!("CARGO_PKG_VERSION"))
+        .release_notes(crate::changelog::release_notes())
         .comments(
             "Removes metadata that files record about you: camera, location and timestamps \
              in photos, author and company in office documents.",

@@ -18,6 +18,8 @@ case "$SCRIPT_DIR/" in
     *)               FLATPAK_SITE="${FLATPAK_SITE:-}" ;;
 esac
 
+FLATPAK_REF="https://flatpak.oyzmo.no/rmmeta.flatpakref"
+
 BIN_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/scalable/apps"
@@ -93,6 +95,40 @@ cleanup_build() {
     else
         ok "Removed build/, .flatpak-builder/ and the cargo build. dist/ is kept."
     fi
+}
+
+# Install from flatpak.oyzmo.no, the way anyone else gets it: the remote is
+# added with its signing key, and GNOME Software keeps it up to date.
+install_flatpak() {
+    command -v flatpak >/dev/null || { err "flatpak not found."; return 1; }
+    local scope
+    for scope in user system; do
+        if flatpak info --"$scope" "$APP_ID" >/dev/null 2>&1; then
+            echo "  Already installed ($scope), from $(flatpak info --"$scope" "$APP_ID" | sed -n 's/^ *Origin: //p')."
+            echo "  Update with: flatpak update $APP_ID  — or use 10 to swap in the newest bundle from dist/."
+            return 0
+        fi
+    done
+    bold "Installing rmMeta from flatpak.oyzmo.no…"
+    if flatpak install --user -y --noninteractive --from "$FLATPAK_REF"; then
+        ok "Installed $(flatpak info --user "$APP_ID" | sed -n 's/^ *Version: //p'). Updates arrive through GNOME Software."
+    else
+        err "Install failed."
+        return 1
+    fi
+}
+
+# Uninstalling keeps the app's data (~/.var/app/$APP_ID).
+uninstall_flatpak() {
+    command -v flatpak >/dev/null || { err "flatpak not found."; return 1; }
+    local scope removed=0
+    for scope in user system; do
+        if flatpak info --"$scope" "$APP_ID" >/dev/null 2>&1; then
+            flatpak uninstall --"$scope" -y --noninteractive "$APP_ID" || { err "Uninstall ($scope) failed."; return 1; }
+            removed=1
+        fi
+    done
+    [ "$removed" -eq 1 ] && ok "Flatpak removed (settings in ~/.var/app/$APP_ID are kept)." || echo "  The flatpak is not installed."
 }
 
 # Swap an installed rmMeta flatpak for the newest bundle in dist/. GNOME
@@ -187,10 +223,13 @@ while true; do
     bold "── rmMeta $(current_version) ────────────────────────"
     echo "  1) Install tools needed to compile"
     echo "  2) Compile"
-    echo "  3) Install on this GNOME desktop"
-    echo "  4) Uninstall"
+    echo "  3) Install on this GNOME desktop (~/.local)"
+    echo "  4) Uninstall from this desktop"
     echo "  8) Cleanup (delete temporary build files)"
+    bold "── Flatpak ──────────────────────────────"
+    echo "  5) Install flatpak (from flatpak.oyzmo.no, updates via GNOME Software)"
     echo " 10) Replace installed flatpak with the newest one (from dist/)"
+    echo "  6) Uninstall flatpak (keeps settings)"
     bold "── Release (in this order) ──────────────"
     echo " 11) Bump version (asks for notes, commits)"
     echo " 13) Full release: 7 → NAS → 12 → 9 in one go"
@@ -199,6 +238,7 @@ while true; do
     echo " 12)   Publish flatpak updates (flatpak.oyzmo.no → GNOME Software)"
     echo "  9)   Release newest version on GitHub (from dist/)"
     echo " 14) Back up the flatpak signing key to the NAS (after the key changes)"
+    echo
     echo "  q) Quit"
     read -rp "Choose: " choice || { echo; exit 0; }  # Ctrl+D quits
     case "$choice" in
@@ -206,6 +246,8 @@ while true; do
         2) compile_app ;;
         3) install_app ;;
         4) uninstall_app ;;
+        5) install_flatpak ;;
+        6) uninstall_flatpak ;;
         7) make_distribution ;;
         8) cleanup_build ;;
         9) release_github ;;
