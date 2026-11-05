@@ -1,6 +1,6 @@
 
-#[cfg(debug_assertions)]
 mod changelog;
+#[cfg(debug_assertions)]
 mod devshot;
 mod icons;
 mod settings;
