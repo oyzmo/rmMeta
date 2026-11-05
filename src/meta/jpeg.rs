@@ -145,9 +145,13 @@ fn classify(marker: u8, payload: &[u8]) -> Segment {
 
 fn finish(mut out: Vec<u8>, findings: Vec<Finding>, orientation: Option<u16>) -> StripResult {
     if let Some(o) = orientation {
-        // Splice the rebuilt Exif in directly after SOI, where APP segments live.
-        let seg = minimal_exif(o);
-        out.splice(2..2, seg);
+        // Splice the rebuilt Exif in among the APP segments: directly after
+        // SOI, or after a JFIF APP0, which must stay the first marker.
+        let at = match out.get(2..6) {
+            Some([0xFF, 0xE0, hi, lo]) => 4 + u16::from_be_bytes([*hi, *lo]) as usize,
+            _ => 2,
+        };
+        out.splice(at..at, minimal_exif(o));
     }
     StripResult::new(out, findings)
 }
@@ -159,6 +163,17 @@ fn finish(mut out: Vec<u8>, findings: Vec<Finding>, orientation: Option<u16>) ->
 /// pixels to bake the rotation in would cost image quality, so the tag is kept
 /// on its own. It says which way is up and nothing about who took the picture.
 fn minimal_exif(orientation: u16) -> Vec<u8> {
+    let tiff = minimal_tiff(orientation);
+    let mut seg = vec![0xFF, 0xE1];
+    seg.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
+    seg.extend_from_slice(b"Exif\0\0");
+    seg.extend_from_slice(&tiff);
+    seg
+}
+
+/// The TIFF block inside `minimal_exif`, which is also what PNG's `eXIf`
+/// and WebP's `EXIF` chunks hold.
+pub(super) fn minimal_tiff(orientation: u16) -> Vec<u8> {
     let mut tiff = Vec::new();
     tiff.extend_from_slice(b"II");
     tiff.extend_from_slice(&42u16.to_le_bytes());
@@ -170,12 +185,7 @@ fn minimal_exif(orientation: u16) -> Vec<u8> {
     tiff.extend_from_slice(&orientation.to_le_bytes());
     tiff.extend_from_slice(&[0, 0]);
     tiff.extend_from_slice(&0u32.to_le_bytes());
-
-    let mut seg = vec![0xFF, 0xE1];
-    seg.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
-    seg.extend_from_slice(b"Exif\0\0");
-    seg.extend_from_slice(&tiff);
-    seg
+    tiff
 }
 
 /// Walk entropy-coded data to the next marker that ends it. `0xFF00` is a
@@ -198,6 +208,26 @@ fn scan_end(data: &[u8], from: usize) -> usize {
 fn be16(data: &[u8], at: usize) -> Option<u16> {
     let b = data.get(at..at + 2)?;
     Some(u16::from_be_bytes([b[0], b[1]]))
+}
+
+/// A TIFF block holding Make ("Cam") and Orientation 6, for the tests of the
+/// formats that keep orientation.
+#[cfg(test)]
+pub(super) fn oriented_tiff_with_make() -> Vec<u8> {
+    let mut t = b"II".to_vec();
+    t.extend_from_slice(&42u16.to_le_bytes());
+    t.extend_from_slice(&8u32.to_le_bytes());
+    t.extend_from_slice(&2u16.to_le_bytes());
+    t.extend_from_slice(&0x010Fu16.to_le_bytes()); // Make, ASCII, 4 bytes inline
+    t.extend_from_slice(&2u16.to_le_bytes());
+    t.extend_from_slice(&4u32.to_le_bytes());
+    t.extend_from_slice(b"Cam\0");
+    t.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation 6
+    t.extend_from_slice(&3u16.to_le_bytes());
+    t.extend_from_slice(&1u32.to_le_bytes());
+    t.extend_from_slice(&[6, 0, 0, 0]);
+    t.extend_from_slice(&0u32.to_le_bytes());
+    t
 }
 
 #[cfg(test)]
@@ -236,6 +266,17 @@ mod tests {
         p.extend_from_slice(&0u32.to_le_bytes());
         p.extend_from_slice(b"Canon\0");
         seg(0xE1, &p)
+    }
+
+    #[test]
+    fn the_rebuilt_exif_goes_after_jfif() {
+        let jfif = seg(0xE0, b"JFIF\0\x01\x02\0\0\x01\0\x01\0\0");
+        let mut exif = b"Exif\0\0".to_vec();
+        exif.extend_from_slice(&oriented_tiff_with_make());
+        let r = strip(&jpeg(&[jfif.clone(), seg(0xE1, &exif)])).unwrap();
+        assert_eq!(&r.data[2..2 + jfif.len()], jfif.as_slice(), "APP0 must follow SOI");
+        assert_eq!(&r.data[2 + jfif.len()..][..2], &[0xFF, 0xE1]);
+        assert!(strip(&r.data).unwrap().findings.is_empty());
     }
 
     #[test]

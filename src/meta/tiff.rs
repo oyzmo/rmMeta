@@ -95,6 +95,7 @@ pub fn strip(data: &[u8], keep_maker_notes: bool) -> Result<StripResult, String>
     // What is in the file, described before anything is touched. The test
     // `nothing_the_reader_reported_survives` holds this honest.
     let described = exif::analyse(data);
+    let has_camera = described.findings.iter().any(|f| f.label == "Camera");
     let mut findings: Vec<Finding> = described
         .findings
         .into_iter()
@@ -150,10 +151,14 @@ pub fn strip(data: &[u8], keep_maker_notes: bool) -> Result<StripResult, String>
     // Stated plainly rather than left as a silent gap: a RAW converter picks
     // its sensor profile from these, and a file without them can be rejected
     // outright as an unknown camera.
-    let mut kept = vec![Finding::new(
-        "Camera make and model",
-        "kept on purpose \u{2014} RAW converters need them to decode the image correctly",
-    )];
+    // Only said when the file names a camera at all; a scan has none.
+    let mut kept = Vec::new();
+    if has_camera {
+        kept.push(Finding::new(
+            "Camera make and model",
+            "kept on purpose \u{2014} RAW converters need them to decode the image correctly",
+        ));
+    }
     if !spared.is_empty() {
         kept.push(Finding::new(
             "Maker notes",
@@ -376,6 +381,12 @@ mod tests {
         t.extend_from_slice(&0u32.to_le_bytes());
         t.extend_from_slice(b"SN-98765");
         t
+    }
+
+    #[test]
+    fn a_file_without_a_camera_does_not_claim_to_keep_one() {
+        let r = super::strip(&with_maker_note(), true).unwrap();
+        assert!(!r.kept.iter().any(|k| k.label == "Camera make and model"), "{:?}", r.kept);
     }
 
     #[test]

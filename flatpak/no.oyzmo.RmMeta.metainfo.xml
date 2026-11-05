@@ -64,6 +64,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.5.0" date="2026-11-05">
+      <description>
+        <p>Comment and tracked-change authors removed from office files, embedded workbooks cleaned; orientation kept in PNG and WebP; files examined without freezing the window</p>
+      </description>
+    </release>
     <release version="0.4.7" date="2026-11-05">
       <description>
         <p>Screenshot script refuses to publish stale or missing shots</p>

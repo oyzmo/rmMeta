@@ -24,6 +24,9 @@ pub fn strip(data: &[u8]) -> Result<StripResult, String> {
     let mut body = Vec::with_capacity(data.len());
     let mut findings = Vec::new();
     let mut pos = 12;
+    // Set when an orientation-only EXIF chunk stays, so VP8X keeps its flag.
+    let mut kept_exif = false;
+    let mut vp8x_at = None;
 
     while pos + 8 <= end {
         let fourcc = &data[pos..pos + 4];
@@ -42,12 +45,28 @@ pub fn strip(data: &[u8]) -> Result<StripResult, String> {
 
         match fourcc {
             b"EXIF" => {
+                // Orientation is kept, as for JPEG; our own orientation-only
+                // chunk is already clean.
                 let info = exif::analyse(strip_exif_prefix(payload));
-                if info.findings.is_empty() {
-                    findings.push(Finding::new("Exif", "camera and capture data"));
+                let ours = info.orientation.map(super::jpeg::minimal_tiff);
+                if ours.as_deref() == Some(payload) {
+                    body.extend_from_slice(&data[pos..chunk_end]);
                 } else {
-                    findings.extend(info.findings);
+                    if info.findings.is_empty() {
+                        findings.push(Finding::new("Exif", "camera and capture data"));
+                    } else {
+                        findings.extend(info.findings);
+                    }
+                    if let Some(tiff) = &ours {
+                        body.extend_from_slice(b"EXIF");
+                        body.extend_from_slice(&(tiff.len() as u32).to_le_bytes());
+                        body.extend_from_slice(tiff);
+                        if tiff.len() % 2 == 1 {
+                            body.push(0);
+                        }
+                    }
                 }
+                kept_exif |= ours.is_some();
             }
             b"XMP " => findings.push(Finding::new(
                 "XMP metadata",
@@ -57,13 +76,20 @@ pub fn strip(data: &[u8]) -> Result<StripResult, String> {
                 let start = body.len();
                 body.extend_from_slice(&data[pos..chunk_end]);
                 if fourcc == b"VP8X" && size >= 1 {
-                    // Now that the chunks are gone, say so in the header.
-                    body[start + 8] &= !(FLAG_EXIF | FLAG_XMP);
+                    vp8x_at = Some(start + 8);
                 }
             }
         }
 
         pos = chunk_end;
+    }
+
+    // Now that the chunks are gone, say so in the header.
+    if let Some(at) = vp8x_at {
+        body[at] &= !FLAG_XMP;
+        if !kept_exif {
+            body[at] &= !FLAG_EXIF;
+        }
     }
 
     let trailing = data.len() - end;
@@ -117,6 +143,21 @@ mod tests {
         let mut payload = vec![flags, 0, 0, 0];
         payload.extend_from_slice(&[1, 0, 0, 1, 0, 0]); // canvas size
         chunk(b"VP8X", &payload)
+    }
+
+    #[test]
+    fn keeps_orientation_and_its_flag() {
+        let picture = chunk(b"VP8 ", b"compressed pixels");
+        let input = webp(&[
+            vp8x(FLAG_EXIF | FLAG_XMP),
+            picture.clone(),
+            chunk(b"EXIF", &crate::meta::jpeg::oriented_tiff_with_make()),
+        ]);
+        let r = strip(&input).unwrap();
+        assert!(!r.findings.is_empty());
+        let expected = webp(&[vp8x(FLAG_EXIF), picture, chunk(b"EXIF", &crate::meta::jpeg::minimal_tiff(6))]);
+        assert_eq!(r.data, expected);
+        assert!(strip(&r.data).unwrap().findings.is_empty());
     }
 
     #[test]

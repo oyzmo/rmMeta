@@ -30,9 +30,25 @@ pub fn strip(data: &[u8]) -> Result<StripResult, String> {
         };
         let payload = &data[pos + 8..end - 4];
 
-        match describe(kind, payload) {
-            Some(f) => findings.push(f),
-            None => out.extend_from_slice(&data[pos..end]),
+        if kind == b"eXIf" {
+            // Orientation is kept, as for JPEG: it is presentation, and
+            // dropping it turns a sideways-shot picture on its side. Our own
+            // orientation-only chunk is already clean.
+            let info = exif::analyse(payload);
+            let ours = info.orientation.map(super::jpeg::minimal_tiff);
+            if ours.as_deref() != Some(payload) {
+                findings.push(exif_finding(&info));
+                if let Some(tiff) = ours {
+                    out.extend_from_slice(&chunk(b"eXIf", &tiff));
+                }
+            } else {
+                out.extend_from_slice(&data[pos..end]);
+            }
+        } else {
+            match describe(kind, payload) {
+                Some(f) => findings.push(f),
+                None => out.extend_from_slice(&data[pos..end]),
+            }
         }
 
         pos = end;
@@ -74,19 +90,6 @@ fn describe(kind: &[u8], payload: &[u8]) -> Option<Finding> {
             };
             Some(Finding::new(format!("Text: {keyword}"), detail))
         }
-        b"eXIf" => {
-            let info = exif::analyse(payload);
-            let detail = if info.findings.is_empty() {
-                "camera and capture data".to_string()
-            } else {
-                info.findings
-                    .iter()
-                    .map(|f| format!("{}: {}", f.label, f.detail))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            };
-            Some(Finding::new("Exif", detail))
-        }
         b"tIME" if payload.len() >= 7 => {
             let year = u16::from_be_bytes([payload[0], payload[1]]);
             Some(Finding::new(
@@ -100,6 +103,31 @@ fn describe(kind: &[u8], payload: &[u8]) -> Option<Finding> {
         b"tIME" => Some(Finding::new("Last modified", "modification timestamp")),
         _ => None,
     }
+}
+
+fn exif_finding(info: &exif::ExifInfo) -> Finding {
+    let detail = if info.findings.is_empty() {
+        "camera and capture data".to_string()
+    } else {
+        info.findings
+            .iter()
+            .map(|f| format!("{}: {}", f.label, f.detail))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    Finding::new("Exif", detail)
+}
+
+/// A complete chunk: length, type, payload and CRC over type and payload.
+fn chunk(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+    let mut v = (payload.len() as u32).to_be_bytes().to_vec();
+    v.extend_from_slice(kind);
+    v.extend_from_slice(payload);
+    let mut crc = crc32fast::Hasher::new();
+    crc.update(kind);
+    crc.update(payload);
+    v.extend_from_slice(&crc.finalize().to_be_bytes());
+    v
 }
 
 fn summarise(text: &str) -> String {
@@ -132,6 +160,20 @@ mod tests {
         v.extend_from_slice(&chunk(b"IDAT", b"pixels"));
         v.extend_from_slice(&chunk(b"IEND", b""));
         v
+    }
+
+    #[test]
+    fn keeps_orientation_in_a_rebuilt_exif_chunk() {
+        let r = strip(&png(&[chunk(b"eXIf", &crate::meta::jpeg::oriented_tiff_with_make())])).unwrap();
+        assert!(r.findings.iter().any(|f| f.label == "Exif" && f.detail.contains("Cam")));
+        let tiff = crate::meta::jpeg::minimal_tiff(6);
+        assert_eq!(r.data, png(&[super::chunk(b"eXIf", &tiff)]));
+        // A real CRC, not a copied one: the chunk is new.
+        let crc = &r.data[r.data.len() - 12 - 18 - 4..][..4];
+        assert_eq!(crc, crc32fast::hash(&[b"eXIf".as_slice(), &tiff].concat()).to_be_bytes());
+        let again = strip(&r.data).unwrap();
+        assert!(again.findings.is_empty(), "{:?}", again.findings);
+        assert_eq!(again.data, r.data);
     }
 
     #[test]

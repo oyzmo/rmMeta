@@ -37,6 +37,7 @@ NEW="${MAJOR}.${MINOR}.${PATCH}"
 TODAY=$(date +%F)
 
 VERSION="$NEW" DATE="$TODAY" RELEASE_NOTE="$NOTE" python3 - <<'PY'
+import html
 import os
 import pathlib
 import re
@@ -66,7 +67,7 @@ meta = pathlib.Path("flatpak/no.oyzmo.RmMeta.metainfo.xml")
 entry = (
     f'    <release version="{new}" date="{date}">\n'
     f"      <description>\n"
-    f"        <p>{note}</p>\n"
+    f"        <p>{html.escape(note, quote=False)}</p>\n"
     f"      </description>\n"
     f"    </release>\n"
 )

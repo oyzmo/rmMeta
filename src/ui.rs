@@ -25,6 +25,8 @@ use crate::settings::{self, Settings};
 const APP_ID: &str = "no.oyzmo.RmMeta";
 
 enum Outcome {
+    /// Being examined or written, off the main thread; the text says which.
+    Busy(&'static str),
     Ready(Examined),
     Failed(String),
     /// Written to `to`, and what was taken out and left in on the way.
@@ -32,6 +34,9 @@ enum Outcome {
 }
 
 struct Entry {
+    /// Results from a background task find their row by this, not by path:
+    /// the row may have been cleared, or replaced by the same file added again.
+    id: u64,
     path: PathBuf,
     outcome: Outcome,
     /// Size and modification time when the file was examined. The cleaned
@@ -41,6 +46,7 @@ struct Entry {
 }
 
 /// Where cleaned files go.
+#[derive(Clone)]
 enum Target {
     /// Over the original.
     Replace,
@@ -88,12 +94,48 @@ struct Ui {
     /// The folder cleaned copies went to inside the sandbox, remembered for
     /// the session so auto mode does not ask on every drop.
     copy_folder: RefCell<Option<PathBuf>>,
+    next_id: Cell<u64>,
 }
 
 impl Ui {
     fn settings(&self) -> Settings {
         self.settings.get()
     }
+
+    /// A row for `path`, waiting for its examination.
+    fn new_entry(&self, path: PathBuf) -> Entry {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        Entry { id, path, outcome: Outcome::Busy("Examining\u{2026}"), stamp: None }
+    }
+}
+
+/// Reading and parsing a file — a 50 MB RAW, a PDF through lopdf — happens on a
+/// worker thread, one file after another, so the window keeps drawing. Each
+/// row is filled in as its result arrives; `then` runs once all are done.
+fn examine_in_background(ui: &Rc<Ui>, ids: Vec<u64>, then: impl FnOnce(&Rc<Ui>) + 'static) {
+    let ui = ui.clone();
+    glib::spawn_future_local(async move {
+        for id in ids {
+            // Stamped before reading: an edit made during the read then shows
+            // up as a change when the file is written.
+            let path = {
+                let mut entries = ui.entries.borrow_mut();
+                let Some(entry) = entries.iter_mut().find(|e| e.id == id) else { continue };
+                entry.stamp = stamp(&entry.path);
+                entry.path.clone()
+            };
+            let settings = ui.settings();
+            let outcome = gio::spawn_blocking(move || examine(&path, settings))
+                .await
+                .unwrap_or_else(|_| Outcome::Failed("examining the file failed unexpectedly".into()));
+            if let Some(entry) = ui.entries.borrow_mut().iter_mut().find(|e| e.id == id) {
+                entry.outcome = outcome;
+            }
+            refresh(&ui);
+        }
+        then(&ui);
+    });
 }
 
 pub fn build(app: &adw::Application) {
@@ -117,6 +159,7 @@ pub fn build(app: &adw::Application) {
         entries: RefCell::new(Vec::new()),
         settings: Cell::new(settings::load()),
         copy_folder: RefCell::new(None),
+        next_id: Cell::new(0),
     });
 
     let view = adw::ToolbarView::new();
@@ -200,14 +243,15 @@ fn header(ui: &Rc<Ui>) -> adw::HeaderBar {
     }));
     ui.window.add_action(&toggle(ui, "keep-maker-notes", |s| &mut s.keep_maker_notes, |ui| {
         // The findings depend on it, so what is listed is examined again.
-        let settings = ui.settings();
+        let mut ids = Vec::new();
         for entry in ui.entries.borrow_mut().iter_mut() {
             if matches!(entry.outcome, Outcome::Ready(_)) {
-                entry.outcome = examine(&entry.path, settings);
-                entry.stamp = stamp(&entry.path);
+                entry.outcome = Outcome::Busy("Examining\u{2026}");
+                ids.push(entry.id);
             }
         }
         refresh(ui);
+        examine_in_background(ui, ids, |_| {});
     }));
 
     header
@@ -382,32 +426,39 @@ fn choose_files(ui: &Rc<Ui>) {
 }
 
 fn add_files(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
-    let settings = ui.settings();
-    let mut added = Vec::new();
+    let auto = ui.settings().auto_clean;
+    let mut ids = Vec::new();
     {
         let mut entries = ui.entries.borrow_mut();
         for path in paths {
             let existing = entries.iter().position(|e| e.path == path);
-            // Already listed and waiting: nothing new to show.
-            if existing.is_some_and(|i| matches!(entries[i].outcome, Outcome::Ready(_))) {
+            // Already listed and waiting, or being worked on: nothing new to show.
+            if existing.is_some_and(|i| matches!(entries[i].outcome, Outcome::Ready(_) | Outcome::Busy(_))) {
                 continue;
             }
-            let entry = Entry { stamp: stamp(&path), outcome: examine(&path, settings), path: path.clone() };
+            let entry = ui.new_entry(path);
+            ids.push(entry.id);
             match existing {
                 // Cleaned or failed before: adding it again looks afresh.
                 Some(i) => entries[i] = entry,
                 None => entries.push(entry),
             }
-            added.push(path);
         }
+    }
+    if ids.is_empty() {
+        return;
     }
     refresh(ui);
 
     // Auto mode cleans what was just added, and only that: files listed
     // before it was switched on are still waiting for the user's decision.
-    if settings.auto_clean && !added.is_empty() {
-        clean(ui, Some(added));
-    }
+    examine_in_background(ui, ids.clone(), move |ui| {
+        if auto {
+            let added =
+                ui.entries.borrow().iter().filter(|e| ids.contains(&e.id)).map(|e| e.path.clone()).collect();
+            clean(ui, Some(added));
+        }
+    });
 }
 
 fn refresh(ui: &Rc<Ui>) {
@@ -456,6 +507,14 @@ fn row_for(entry: &Entry, expanded: bool) -> gtk::Widget {
         .unwrap_or_else(|| entry.path.display().to_string());
 
     let (icon, subtitle, findings, kept) = match &entry.outcome {
+        Outcome::Busy(what) => {
+            let row = adw::ActionRow::builder()
+                .title(glib::markup_escape_text(&name))
+                .subtitle(*what)
+                .build();
+            row.add_prefix(&adw::Spinner::new());
+            return row.upcast();
+        }
         Outcome::Failed(why) => ("dialog-warning-symbolic", why.clone(), &[][..], &[][..]),
         // Still listing what came out, so a file cleaned automatically can be
         // checked afterwards.
@@ -579,78 +638,98 @@ fn clean(ui: &Rc<Ui>, only: Option<Vec<PathBuf>>) {
 }
 
 fn write_all(ui: &Rc<Ui>, target: Target, only: Option<Vec<PathBuf>>) {
-    let settings = ui.settings();
-    let mut cleaned = 0usize;
-    let mut changed = 0usize;
-    let mut failed: Vec<String> = Vec::new();
+    let mut jobs: Vec<(u64, PathBuf, Examined)> = Vec::new();
+    let mut changed: Vec<u64> = Vec::new();
 
-    {
-        let mut entries = ui.entries.borrow_mut();
-        for entry in entries.iter_mut() {
-            if only.as_ref().is_some_and(|paths| !paths.contains(&entry.path)) {
-                continue;
-            }
-            let Outcome::Ready(found) = &entry.outcome else { continue };
-            if found.is_clean() {
-                continue;
-            }
-            // Edited since it was examined: the cleaned bytes belong to the
-            // old version. Look again and let the user see the new findings
-            // rather than overwrite the edit.
-            let now = stamp(&entry.path);
-            if now != entry.stamp {
-                entry.outcome = examine(&entry.path, settings);
-                entry.stamp = now;
-                changed += 1;
-                continue;
-            }
-            let destination = match &target {
-                // Through a symbolic link to the file it names; renaming over
-                // the link would replace the link and leave the file dirty.
-                Target::Replace => fs::canonicalize(&entry.path).unwrap_or_else(|_| entry.path.clone()),
-                Target::Beside => meta::copy_destination(&entry.path),
-                Target::Into(folder) => meta::copy_destination_in(&entry.path, folder),
-            };
-            match write_file(&entry.path, &destination, &found.cleaned) {
-                Ok(()) => {
-                    cleaned += 1;
-                    entry.outcome = Outcome::Written {
-                        to: destination,
-                        removed: found.findings.clone(),
-                        kept: found.kept.clone(),
-                    };
-                }
-                Err(e) => {
-                    failed.push(format!("{}: {e}", entry.path.display()));
-                    entry.outcome = Outcome::Failed(e);
-                }
-            }
+    for entry in ui.entries.borrow_mut().iter_mut() {
+        if only.as_ref().is_some_and(|paths| !paths.contains(&entry.path)) {
+            continue;
         }
+        if !matches!(&entry.outcome, Outcome::Ready(found) if !found.is_clean()) {
+            continue;
+        }
+        // Edited since it was examined: the cleaned bytes belong to the old
+        // version. Look again and let the user see the new findings rather
+        // than overwrite the edit.
+        if stamp(&entry.path) != entry.stamp {
+            entry.outcome = Outcome::Busy("Examining\u{2026}");
+            changed.push(entry.id);
+            continue;
+        }
+        let Outcome::Ready(found) = std::mem::replace(&mut entry.outcome, Outcome::Busy("Cleaning\u{2026}"))
+        else {
+            unreachable!("checked above")
+        };
+        jobs.push((entry.id, entry.path.clone(), found));
     }
-
     refresh(ui);
 
-    let replace = matches!(target, Target::Replace);
-    let mut message = match (cleaned, failed.len()) {
-        (0, 0) if changed > 0 => String::new(),
-        (0, 0) => "Nothing to remove".to_string(),
-        (n, 0) if replace => format!("Cleaned {n} file{}", plural(n)),
-        (n, 0) => format!("Wrote {n} cleaned cop{}", if n == 1 { "y" } else { "ies" }),
-        (0, f) => format!("Failed on {f} file{}", plural(f)),
-        (n, f) => format!("Cleaned {n}, failed on {f}"),
-    };
-    if changed > 0 {
-        if !message.is_empty() {
-            message.push_str(". ");
+    let ui = ui.clone();
+    glib::spawn_future_local(async move {
+        let mut cleaned = 0usize;
+        let mut failed = 0usize;
+        // One at a time, and the destination is chosen inside the job: two
+        // files of the same name going to one folder must not both be given
+        // the same free `-clean` name.
+        for (id, path, found) in jobs {
+            let target = target.clone();
+            let done = gio::spawn_blocking(move || {
+                let destination = match &target {
+                    // Through a symbolic link to the file it names; renaming
+                    // over the link would replace the link and leave the file
+                    // dirty.
+                    Target::Replace => fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
+                    Target::Beside => meta::copy_destination(&path),
+                    Target::Into(folder) => meta::copy_destination_in(&path, folder),
+                };
+                let result = write_file(&path, &destination, &found.cleaned).map(|()| destination);
+                (result, found)
+            })
+            .await;
+            let outcome = match done {
+                Ok((Ok(to), found)) => {
+                    cleaned += 1;
+                    Outcome::Written { to, removed: found.findings, kept: found.kept }
+                }
+                Ok((Err(e), _)) => {
+                    failed += 1;
+                    Outcome::Failed(e)
+                }
+                Err(_) => {
+                    failed += 1;
+                    Outcome::Failed("writing the file failed unexpectedly".into())
+                }
+            };
+            if let Some(entry) = ui.entries.borrow_mut().iter_mut().find(|e| e.id == id) {
+                entry.outcome = outcome;
+            }
+            refresh(&ui);
         }
-        message.push_str(&format!(
-            "{changed} file{} changed since {} added and {} examined again",
-            plural(changed),
-            if changed == 1 { "it was" } else { "they were" },
-            if changed == 1 { "was" } else { "were" },
-        ));
-    }
-    ui.toasts.add_toast(adw::Toast::new(&message));
+
+        let replace = matches!(target, Target::Replace);
+        let changed_count = changed.len();
+        let mut message = match (cleaned, failed) {
+            (0, 0) if changed_count > 0 => String::new(),
+            (0, 0) => "Nothing to remove".to_string(),
+            (n, 0) if replace => format!("Cleaned {n} file{}", plural(n)),
+            (n, 0) => format!("Wrote {n} cleaned cop{}", if n == 1 { "y" } else { "ies" }),
+            (0, f) => format!("Failed on {f} file{}", plural(f)),
+            (n, f) => format!("Cleaned {n}, failed on {f}"),
+        };
+        if changed_count > 0 {
+            if !message.is_empty() {
+                message.push_str(". ");
+            }
+            message.push_str(&format!(
+                "{changed_count} file{} changed since {} added and {} examined again",
+                plural(changed_count),
+                if changed_count == 1 { "it was" } else { "they were" },
+                if changed_count == 1 { "was" } else { "were" },
+            ));
+        }
+        ui.toasts.add_toast(adw::Toast::new(&message));
+        examine_in_background(&ui, changed, |_| {});
+    });
 }
 
 fn human_size(bytes: usize) -> String {

@@ -56,6 +56,11 @@ pub fn strip(data: &[u8]) -> Result<StripResult, String> {
 
     let mut findings = Vec::new();
 
+    // Taken before anything is removed: the removals below cut loose objects
+    // of their own (an indirect /Author string, a /PieceInfo private stream),
+    // and those are this revision's metadata, not an earlier revision's.
+    let unreachable_at_load = unreachable(&mut doc);
+
     // The file identifier persists across saves and ties copies of a document
     // together, so it is an identifier in its own right.
     if doc.trailer.get(b"ID").is_ok() {
@@ -78,7 +83,10 @@ pub fn strip(data: &[u8]) -> Result<StripResult, String> {
 
     // Must come last: the removals above orphan the objects they detach, and
     // this is what actually drops them.
-    let orphans = prune_unreachable(&mut doc);
+    let orphans: Vec<ObjectId> = prune_unreachable(&mut doc)
+        .into_iter()
+        .filter(|id| unreachable_at_load.contains(id))
+        .collect();
     let revisions = data.windows(5).filter(|w| *w == b"%%EOF").count().saturating_sub(usize::from(linearized));
     if !orphans.is_empty() {
         findings.push(Finding::new(
@@ -113,13 +121,26 @@ fn strip_info(doc: &mut Document, findings: &mut Vec<Finding>) {
         _ => None,
     };
 
-    let entries: Vec<(Vec<u8>, Object)> = match id.and_then(|id| doc.get_dictionary(id).ok()) {
-        Some(dict) => dict.iter().map(|(k, v)| (k.to_vec(), v.clone())).collect(),
-        None => return,
+    // Usually an indirect object, but some producers write the dictionary
+    // straight into the trailer.
+    let entries: Vec<(Vec<u8>, Object)> = match reference {
+        Object::Dictionary(dict) => dict.iter().map(|(k, v)| (k.to_vec(), v.clone())).collect(),
+        _ => match id.and_then(|id| doc.get_dictionary(id).ok()) {
+            Some(dict) => dict.iter().map(|(k, v)| (k.to_vec(), v.clone())).collect(),
+            None => Vec::new(),
+        },
     };
 
     for (key, value) in entries {
         let Some(label) = info_label(&key) else { continue };
+        // A value may itself be an indirect string.
+        let value = match value {
+            Object::Reference(r) => match doc.get_object(r) {
+                Ok(target) => target.clone(),
+                Err(_) => continue,
+            },
+            v => v,
+        };
         let Some(text) = text_of(&value) else { continue };
         let detail = if key.ends_with(b"Date") { pretty_date(&text) } else { text };
         let label = if label == "Document property" {
@@ -316,16 +337,14 @@ fn strip_private_data(doc: &mut Document, findings: &mut Vec<Finding>) {
 /// from the trailer and keeps only what is still referenced.
 /// Returns only the orphans that represent real leftover content. Everything
 /// unreachable is removed either way.
-fn prune_unreachable(doc: &mut Document) -> Vec<ObjectId> {
+fn unreachable(doc: &mut Document) -> std::collections::HashSet<ObjectId> {
     let reachable: std::collections::HashSet<ObjectId> =
         doc.traverse_objects(|_| {}).into_iter().collect();
+    doc.objects.keys().filter(|id| !reachable.contains(id)).copied().collect()
+}
 
-    let orphans: Vec<ObjectId> = doc
-        .objects
-        .keys()
-        .filter(|id| !reachable.contains(id))
-        .copied()
-        .collect();
+fn prune_unreachable(doc: &mut Document) -> Vec<ObjectId> {
+    let orphans: Vec<ObjectId> = unreachable(doc).into_iter().collect();
 
     // The cross-reference stream and any object streams are reached through
     // the file's byte offsets, not by reference, so they always land in this
@@ -535,6 +554,46 @@ mod tests {
         let once = strip(&build(true)).unwrap();
         let twice = strip(&once.data).unwrap();
         assert!(!labels(&twice.findings).contains(&"Earlier revisions"), "{:?}", twice.findings);
+    }
+
+    #[test]
+    fn metadata_cut_loose_by_cleaning_is_not_an_earlier_revision() {
+        // An indirect /Author string and a /PieceInfo private stream become
+        // unreachable only once their keys are removed.
+        let mut doc = Document::load_mem(&build(false)).unwrap();
+        let author = doc.add_object(Object::String(b"Indirect Author".to_vec(), StringFormat::Literal));
+        let private = doc.add_object(Stream::new(dictionary! {}, b"editor state".to_vec()));
+        let info = doc.trailer.get(b"Info").unwrap().as_reference().unwrap();
+        doc.get_dictionary_mut(info).unwrap().set("Author", author);
+        let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        doc.get_dictionary_mut(root)
+            .unwrap()
+            .set("PieceInfo", dictionary! { "App" => dictionary! { "Private" => private } });
+        let mut data = Vec::new();
+        doc.save_to(&mut data).unwrap();
+
+        let result = strip(&data).unwrap();
+        let labels = labels(&result.findings);
+        assert!(!labels.contains(&"Earlier revisions"), "{labels:?}");
+        let author = result.findings.iter().find(|f| f.label == "Author").unwrap();
+        assert_eq!(author.detail, "Indirect Author");
+        assert!(!result.data.windows(15).any(|w| w == b"Indirect Author"));
+    }
+
+    #[test]
+    fn a_direct_information_dictionary_is_removed_too() {
+        let mut doc = Document::load_mem(&build(false)).unwrap();
+        doc.trailer.set(
+            "Info",
+            dictionary! { "Author" => Object::String(b"Direct Author".to_vec(), StringFormat::Literal) },
+        );
+        let mut data = Vec::new();
+        doc.save_to(&mut data).unwrap();
+        assert!(data.windows(13).any(|w| w == b"Direct Author"));
+
+        let result = strip(&data).unwrap();
+        assert!(labels(&result.findings).contains(&"Author"));
+        assert!(!result.data.windows(13).any(|w| w == b"Direct Author"));
     }
 
     /// One page with the given annotations in its /Annots array.

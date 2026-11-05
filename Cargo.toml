@@ -1,6 +1,6 @@
 [package]
 name = "rmmeta"
-version = "0.4.7"
+version = "0.5.0"
 edition = "2021"
 description = "Strip identifying metadata from images, PDFs and office documents old and new"
 license = "GPL-3.0-or-later"
@@ -19,6 +19,8 @@ quick-xml = "0.41.0"
 lopdf = { version = "0.44", default-features = false }
 # Legacy Office files are OLE2 compound files; this reads and rewrites them.
 cfb = "0.14"
+# PNG chunk checksums, for the orientation-only eXIf. Already in the tree via zip.
+crc32fast = "1"
 # Pure-Rust deflate on purpose: the Flatpak build has no C toolchain and the
 # vendored-sources generator only understands crates.
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

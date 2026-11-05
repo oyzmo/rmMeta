@@ -208,11 +208,29 @@ pub(crate) fn clean_embedded_image(data: &[u8], options: &Options) -> Option<Exa
     (!found.is_clean()).then_some(found)
 }
 
+/// An office document or PDF inside another document — the workbook behind a
+/// chart, an attached file — carries its own author and properties.
+pub(crate) fn clean_embedded_document(data: &[u8], options: &Options) -> Option<Examined> {
+    let kind = detect(data)?;
+    if !matches!(kind, Kind::Document(_) | Kind::Legacy(_) | Kind::Pdf) {
+        return None;
+    }
+    let found = examine_with(data, options).ok()?;
+    (!found.is_clean()).then_some(found)
+}
+
 /// One line for a cleaned embedded picture, naming where it was found.
 pub(crate) fn embedded_finding(place: &str, found: &Examined) -> Finding {
     let mut what: Vec<&str> = found.findings.iter().map(|f| f.label.as_str()).collect();
     what.dedup();
     Finding::new("Embedded image", format!("{place}: {}", what.join(", ")))
+}
+
+pub(crate) fn embedded_document_finding(place: &str, found: &Examined) -> Finding {
+    let mut what: Vec<&str> = found.findings.iter().map(|f| f.label.as_str()).collect();
+    what.sort();
+    what.dedup();
+    Finding::new("Embedded document", format!("{place}: {}", what.join(", ")))
 }
 
 /// The embedded picture's own limitations, added to the container's without

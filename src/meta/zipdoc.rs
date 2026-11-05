@@ -10,7 +10,7 @@ use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
-use super::xml::strip_elements;
+use super::xml::{scrub_attributes, strip_elements};
 use super::{Finding, StripResult};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -85,6 +85,32 @@ const ODF_META: &[&str] = &[
     "meta:print-date",
 ];
 
+/// Who left each comment and made each tracked change, which the property
+/// parts know nothing about. The parts: `(where, attributes to empty,
+/// attributes to remove)`. Word's `w:date` is optional and goes; the comment
+/// dates of the other formats are required, so they stay with a `kept` note.
+fn ooxml_people(name: &str) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    let xml = name.ends_with(".xml");
+    Some(match name {
+        "word/people.xml" => (&["author", "userId"], &[]),
+        n if xml && n.starts_with("word/") => (&["author", "initials"], &["date", "dateUtc"]),
+        n if xml && n.starts_with("xl/persons/") => (&["displayName", "userId"], &[]),
+        "ppt/commentAuthors.xml" => (&["name", "initials"], &[]),
+        "ppt/authors.xml" => (&["name", "initials", "userId"], &[]),
+        _ => return None,
+    })
+}
+
+fn has_comment_dates(kind: DocKind, name: &str, body: &[u8]) -> bool {
+    let has = |needle: &[u8]| body.windows(needle.len()).any(|w| w == needle);
+    match kind {
+        DocKind::Ooxml if name.starts_with("xl/threadedComments/") => has(b" dT=\""),
+        DocKind::Ooxml if name.starts_with("ppt/comments/") => has(b" dt=\""),
+        DocKind::Odf if matches!(name, "content.xml" | "styles.xml") => has(b"<dc:date>"),
+        _ => false,
+    }
+}
+
 /// Removed outright rather than emptied: what they disclose is in attributes.
 /// See `xml::strip_elements`.
 const ODF_DELETE: &[&str] = &["meta:template", "meta:user-defined"];
@@ -111,8 +137,37 @@ pub fn strip(data: &[u8], kind: DocKind, options: &super::Options) -> Result<Str
     let mut findings = Vec::new();
     let mut kept = Vec::new();
     let mut had_timestamp = false;
+    let mut authors: Vec<String> = Vec::new();
+    let mut dated = 0usize;
+    let mut kept_dates = false;
 
     for e in &mut entries {
+        kept_dates |= has_comment_dates(kind, &e.name, &e.body);
+
+        // Comment and tracked-change authors live in the content parts.
+        let people: Option<Result<_, String>> = match (kind, e.name.as_str()) {
+            (DocKind::Ooxml, n) if n.starts_with("xl/comments") && n.ends_with(".xml") => {
+                Some(strip_elements(&e.body, &["author"], &[]))
+            }
+            (DocKind::Ooxml, n) => ooxml_people(n).map(|(b, d)| scrub_attributes(&e.body, b, d)),
+            (DocKind::Odf, "content.xml" | "styles.xml") => {
+                Some(strip_elements(&e.body, &["dc:creator", "meta:creator-initials"], &[]))
+            }
+            _ => None,
+        };
+        if let Some(stripped) = people {
+            let stripped = stripped?;
+            for (key, value) in stripped.removed {
+                if key.ends_with("date") || key.ends_with("dateUtc") {
+                    dated += 1;
+                } else if !authors.contains(&value) {
+                    authors.push(value);
+                }
+            }
+            e.body = stripped.xml;
+            continue;
+        }
+
         let (targets, delete): (&[&str], &[&str]) = match (kind, e.name.as_str()) {
             (DocKind::Ooxml, "docProps/core.xml") => (OOXML_CORE, &[]),
             (DocKind::Ooxml, "docProps/app.xml") => (OOXML_APP, &[]),
@@ -126,6 +181,11 @@ pub fn strip(data: &[u8], kind: DocKind, options: &super::Options) -> Result<Str
                     findings.push(super::embedded_finding(&e.name, &found));
                     super::merge_kept(&mut kept, &found);
                     e.body = found.cleaned;
+                } else if let Some(found) = super::clean_embedded_document(&e.body, options) {
+                    // The workbook behind a chart has properties of its own.
+                    findings.push(super::embedded_document_finding(&e.name, &found));
+                    super::merge_kept(&mut kept, &found);
+                    e.body = found.cleaned;
                 }
                 continue;
             }
@@ -136,6 +196,25 @@ pub fn strip(data: &[u8], kind: DocKind, options: &super::Options) -> Result<Str
             findings.push(Finding::new(label_for(&element), value));
         }
         e.body = stripped.xml;
+    }
+
+    if !authors.is_empty() {
+        findings.push(Finding::new("Comment and revision authors", authors.join(", ")));
+    }
+    if dated > 0 {
+        findings.push(Finding::new(
+            "Revision dates",
+            format!(
+                "{dated} timestamp{} on comments and tracked changes",
+                if dated == 1 { "" } else { "s" }
+            ),
+        ));
+    }
+    if kept_dates {
+        kept.push(Finding::new(
+            "Comment dates",
+            "when each comment or tracked change was made \u{2014} the format requires them",
+        ));
     }
 
     // Every entry carries its own modification time, which maps out when the
@@ -247,6 +326,91 @@ mod tests {
             w.write_all(body).unwrap();
         }
         w.finish().unwrap().into_inner()
+    }
+
+    fn package(parts: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut w = ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, body) in parts {
+            w.start_file(*name, SimpleFileOptions::default()).unwrap();
+            w.write_all(body).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn comment_and_revision_authors_go_from_every_format() {
+        let docx = package(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("word/document.xml", br#"<w:document xmlns:w="w"><w:ins w:id="1" w:author="Jane Doe" w:date="2024-01-02T10:00:00Z">x</w:ins></w:document>"#),
+            ("word/comments.xml", br#"<w:comments xmlns:w="w"><w:comment w:id="0" w:author="Bob Roe" w:initials="BR">note</w:comment></w:comments>"#),
+            ("word/people.xml", br#"<w15:people xmlns:w15="x"><w15:person w15:author="Bob Roe"><w15:presenceInfo w15:providerId="AD" w15:userId="bob@corp.example"/></w15:person></w15:people>"#),
+        ]);
+        let xlsx = package(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("xl/comments1.xml", br#"<comments><authors><author>Jane Doe</author></authors></comments>"#),
+            ("xl/persons/person.xml", br#"<personList><person displayName="Bob Roe" userId="bob@corp.example"/></personList>"#),
+        ]);
+        let pptx = package(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("ppt/commentAuthors.xml", br#"<p:cmAuthorLst xmlns:p="p"><p:cmAuthor id="0" name="Jane Doe" initials="JD"/></p:cmAuthorLst>"#),
+            ("ppt/comments/comment1.xml", br#"<p:cmLst xmlns:p="p"><p:cm authorId="0" dt="2024-01-02T10:00:00"/></p:cmLst>"#),
+        ]);
+        for file in [docx, xlsx, pptx] {
+            let out = strip(&file, DocKind::Ooxml).unwrap();
+            let mut zip = ZipArchive::new(Cursor::new(&out.data)).unwrap();
+            for i in 0..zip.len() {
+                let mut s = String::new();
+                zip.by_index(i).unwrap().read_to_string(&mut s).unwrap();
+                for name in ["Jane Doe", "Bob Roe", "bob@corp", "2024-01-02T10:00:00Z", "\"BR\"", "\"JD\""] {
+                    assert!(!s.contains(name), "{name} survived in {s}");
+                }
+            }
+            assert!(out.findings.iter().any(|f| f.label == "Comment and revision authors"), "{:?}", out.findings);
+            let again = strip(&out.data, DocKind::Ooxml).unwrap();
+            assert!(again.findings.is_empty(), "{:?}", again.findings);
+        }
+    }
+
+    #[test]
+    fn required_comment_dates_are_kept_and_said_so() {
+        let pptx = package(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("ppt/comments/comment1.xml", br#"<p:cmLst xmlns:p="p"><p:cm authorId="0" dt="2024-01-02T10:00:00"/></p:cmLst>"#),
+        ]);
+        let out = strip(&pptx, DocKind::Ooxml).unwrap();
+        assert!(out.kept.iter().any(|k| k.label == "Comment dates"));
+    }
+
+    #[test]
+    fn odf_annotation_authors_go() {
+        let odt = package(&[
+            ("mimetype", b"application/vnd.oasis.opendocument.text"),
+            ("content.xml", br#"<office:document-content xmlns:office="o" xmlns:dc="d"><office:annotation><dc:creator>Jane Doe</dc:creator><dc:date>2024-01-02T10:00:00</dc:date><text:p>note</text:p></office:annotation></office:document-content>"#),
+        ]);
+        let out = strip(&odt, DocKind::Odf).unwrap();
+        assert!(!read(&out.data, "content.xml").contains("Jane Doe"));
+        assert!(read(&out.data, "content.xml").contains("note"));
+        assert!(out.findings.iter().any(|f| f.detail.contains("Jane Doe")));
+        assert!(out.kept.iter().any(|k| k.label == "Comment dates"));
+    }
+
+    #[test]
+    fn embedded_workbooks_are_cleaned_too() {
+        let inner = package(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("docProps/core.xml", CORE),
+        ]);
+        let outer = package(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("word/embeddings/Microsoft_Excel_Worksheet.xlsx", &inner),
+        ]);
+        let out = strip(&outer, DocKind::Ooxml).unwrap();
+        assert!(out.findings.iter().any(|f| f.label == "Embedded document"), "{:?}", out.findings);
+        let mut zip = ZipArchive::new(Cursor::new(&out.data)).unwrap();
+        let mut cleaned = Vec::new();
+        zip.by_name("word/embeddings/Microsoft_Excel_Worksheet.xlsx").unwrap().read_to_end(&mut cleaned).unwrap();
+        assert!(!read(&cleaned, "docProps/core.xml").contains("Jane Doe"));
+        assert!(strip(&out.data, DocKind::Ooxml).unwrap().findings.is_empty());
     }
 
     fn read(data: &[u8], name: &str) -> String {

@@ -107,8 +107,32 @@ pub fn strip_elements(xml: &[u8], targets: &[&str], delete: &[&str]) -> Result<S
                 buf.clear();
                 continue;
             }
+            // A value may be written partly or wholly as CDATA or as entity
+            // and character references; it is removed either way, so it is
+            // reported either way.
+            Event::CData(t) if depth > 0 => {
+                if let Ok(s) = t.decode() {
+                    text.push_str(&s);
+                }
+                buf.clear();
+                continue;
+            }
+            Event::GeneralRef(r) if depth > 0 => {
+                match r.resolve_char_ref() {
+                    Ok(Some(c)) => text.push(c),
+                    _ => {
+                        let name = r.decode().unwrap_or_default();
+                        match quick_xml::escape::resolve_predefined_entity(&name) {
+                            Some(s) => text.push_str(s),
+                            None => text.push_str(&format!("&{name};")),
+                        }
+                    }
+                }
+                buf.clear();
+                continue;
+            }
             _ if depth > 0 => {
-                // Comments, CDATA and nested markup inside a target: dropped.
+                // Comments and nested markup inside a target: dropped.
                 buf.clear();
                 continue;
             }
@@ -120,6 +144,80 @@ pub fn strip_elements(xml: &[u8], targets: &[&str], delete: &[&str]) -> Result<S
     }
 
     Ok(Stripped { xml: writer.into_inner(), removed })
+}
+
+/// Empty the attributes named in `blank` and remove those named in `drop`, on
+/// every element; names match as in `strip_elements`. This is for identity
+/// carried in attributes on content — `w:author` on a tracked change or a
+/// comment — where the element itself is the document and must stay. A tag
+/// with nothing to change is written back exactly as read.
+pub fn scrub_attributes(xml: &[u8], blank: &[&str], drop: &[&str]) -> Result<Stripped, String> {
+    let mut reader = Reader::from_reader(xml);
+    let mut writer = Writer::new(Vec::new());
+    let mut removed = Vec::new();
+    let mut buf = Vec::new();
+
+    loop {
+        let event = reader
+            .read_event_into(&mut buf)
+            .map_err(|e| format!("could not parse XML: {e}"))?;
+        let rebuilt = match &event {
+            Event::Eof => break,
+            Event::Start(e) | Event::Empty(e) => scrub_tag(e, blank, drop, &mut removed),
+            _ => None,
+        };
+        match (rebuilt, &event) {
+            (Some(tag), Event::Start(_)) => writer.write_event(Event::Start(tag)),
+            (Some(tag), _) => writer.write_event(Event::Empty(tag)),
+            (None, _) => writer.write_event(event.borrow()),
+        }
+        .map_err(write_err)?;
+        buf.clear();
+    }
+
+    Ok(Stripped { xml: writer.into_inner(), removed })
+}
+
+fn scrub_tag(
+    element: &BytesStart,
+    blank: &[&str],
+    drop: &[&str],
+    removed: &mut Vec<(String, String)>,
+) -> Option<BytesStart<'static>> {
+    let mut rebuilt = BytesStart::new(qname(element.name().as_ref()));
+    let mut changed = false;
+    for attribute in element.attributes().flatten() {
+        let key = qname(attribute.key.as_ref());
+        let is_blank = matches(&key, blank);
+        if is_blank || matches(&key, drop) {
+            let value = attribute
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default();
+            if value.is_empty() {
+                // Already blank: keep as is, so a cleaned file stays clean.
+                rebuilt.push_attribute((key.as_bytes(), attribute.value.as_ref()));
+                continue;
+            }
+            removed.push((key.clone(), value));
+            changed = true;
+            if is_blank {
+                rebuilt.push_attribute((key.as_bytes(), b"".as_slice()));
+            }
+            continue;
+        }
+        // Read raw and written back raw, always between double quotes, so a
+        // `"` from a single-quoted value is the one character to escape.
+        let raw = attribute.value.as_ref();
+        if raw.contains(&b'"') {
+            let escaped: Vec<u8> =
+                raw.iter().flat_map(|&b| if b == b'"' { b"&quot;".to_vec() } else { vec![b] }).collect();
+            rebuilt.push_attribute((key.as_bytes(), escaped.as_slice()));
+        } else {
+            rebuilt.push_attribute((key.as_bytes(), raw));
+        }
+    }
+    changed.then_some(rebuilt)
 }
 
 /// A deleted element's `name` attribute, if it has one, and failing that its
@@ -224,5 +322,33 @@ mod tests {
         let out = blank_elements(xml, &["dc:creator", "nothing"]).unwrap();
         assert!(out.removed.is_empty());
         assert!(String::from_utf8(out.xml).unwrap().contains("<keep>x</keep>"));
+    }
+
+    #[test]
+    fn scrubs_attributes_and_leaves_untouched_tags_alone() {
+        let xml = br#"<w:body xmlns:w="w"><w:ins w:id="1" w:author="Jane &amp; Co" w:date="2024-01-02T10:00:00Z"><w:r a='x"y'/></w:ins><w:p w:author=""/></w:body>"#;
+        let out = scrub_attributes(xml, &["w:author"], &["w:date"]).unwrap();
+        let s = String::from_utf8(out.xml).unwrap();
+        assert_eq!(
+            s,
+            r#"<w:body xmlns:w="w"><w:ins w:id="1" w:author=""><w:r a='x"y'/></w:ins><w:p w:author=""/></w:body>"#
+        );
+        assert_eq!(
+            out.removed,
+            vec![
+                ("w:author".to_string(), "Jane & Co".to_string()),
+                ("w:date".to_string(), "2024-01-02T10:00:00Z".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn values_in_cdata_or_references_are_reported() {
+        let xml = br#"<r xmlns:dc="y"><dc:creator>Smith &amp; Jones</dc:creator><dc:contributor><![CDATA[Jane]]></dc:contributor><dc:publisher>&#x5F20;&#x4E09;</dc:publisher></r>"#;
+        let out = blank_elements(xml, &["dc:creator", "dc:contributor", "dc:publisher"]).unwrap();
+        let values: Vec<&str> = out.removed.iter().map(|(_, v)| v.as_str()).collect();
+        assert_eq!(values, ["Smith & Jones", "Jane", "张三"]);
+        let s = String::from_utf8(out.xml).unwrap();
+        assert!(!s.contains("Jane") && !s.contains("Smith") && !s.contains("#x5F20"), "{s}");
     }
 }
