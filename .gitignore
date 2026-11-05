@@ -8,8 +8,8 @@
 # Scratch: fixtures, screenshots, verification output, harness runs.
 # Nothing in here is part of the app.
 /dev/*
-# ...except the GitHub mirror script, which the NAS should back up. It
-# filters dev/ out itself, so it never reaches GitHub.
+# ...except the release and screenshot scripts, which the NAS should back up.
+# push-github.sh filters dev/ out, so none of them reaches GitHub.
 !/dev/push-github.sh
 !/dev/release-github.sh
 !/dev/screenshots.sh

@@ -64,6 +64,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.7" date="2026-11-05">
+      <description>
+        <p>Screenshot script refuses to publish stale or missing shots</p>
+      </description>
+    </release>
     <release version="0.4.6" date="2026-10-26">
       <description>
         <p>Screenshots in GNOME Software</p>
